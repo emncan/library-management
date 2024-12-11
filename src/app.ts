@@ -3,7 +3,7 @@ import express, { Application } from 'express';
 import userRoutes from './routes/userRoutes';
 import bookRoutes from './routes/bookRoutes';
 import { syncDatabase } from './models/index';
-
+import { logger } from './utils/logger';
 import { errorHandler } from './middleware/errorHandler';
 
 const app: Application = express();
@@ -17,12 +17,12 @@ app.use(errorHandler);
 const startServer = async () => {
     try {
         syncDatabase();
-        console.log('Database synced!');
+        logger.info('Database synced!');
         app.listen(3000, () => {
-            console.log('Server is running on port 3000');
+            logger.info('Server is running on port 3000');
         });
     } catch (error) {
-        console.error('Error syncing database:', error);
+        logger.error('Error syncing database:', error);
     }
 };
 
