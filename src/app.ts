@@ -5,6 +5,7 @@ import bookRoutes from './routes/bookRoutes';
 import { syncDatabase } from './models/index';
 import { logger } from './utils/logger';
 import { errorHandler } from './middleware/errorHandler';
+import { routeNotFound } from "./middleware/routeNotFound";
 
 const app: Application = express();
 app.use(express.json());
@@ -12,6 +13,7 @@ app.use(express.json());
 app.use('/users', userRoutes);
 app.use('/books', bookRoutes);
 
+app.use(routeNotFound);
 app.use(errorHandler);
 
 const startServer = async () => {
