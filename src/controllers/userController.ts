@@ -2,6 +2,7 @@ import express, { Request, Response } from "express";
 import { validationResult } from "express-validator";
 import { NotFoundError } from "../errors/NotFoundError";
 import { BadRequestError } from "../errors/BadRequestError";
+import sequelize from "../utils/database";
 import User from "../models/User";
 import Book from "../models/Book";
 import Borrow from "../models/Borrow";
@@ -102,35 +103,44 @@ export const getUserWithBooks = async (req: Request, res: Response) => {
 export const borrowBook = async (req: Request, res: Response) => {
     const { userId, bookId } = req.params;
 
-    const user = await User.findByPk(userId);
-    if (!user) {
-        throw new NotFoundError("User not found.");
-    }
+    const transaction = await sequelize.transaction();
 
-    const book = await Book.findByPk(bookId);
-    if (!book) {
-        throw new NotFoundError("Book not found.");
-    }
-
-    if (!book.status) {
-        throw new NotFoundError("Book is already borrowed by another user.");
-    }
     try {
-        const borrow = await Borrow.create({
-            userId: Number(userId),
-            bookId: Number(bookId),
-            borrowDate: new Date(),
-            returnDate: null,
-        });
+        const user = await User.findByPk(userId, { transaction });
+        if (!user) {
+            throw new NotFoundError("User not found.");
+        }
+
+        const book = await Book.findByPk(bookId, { transaction });
+        if (!book) {
+            throw new NotFoundError("Book not found.");
+        }
+
+        if (!book.status) {
+            throw new NotFoundError("Book is already borrowed by another user.");
+        }
+
+        await Borrow.create(
+            {
+                userId: Number(userId),
+                bookId: Number(bookId),
+                borrowDate: new Date(),
+                returnDate: null,
+            },
+            { transaction }
+        );
 
         book.status = false;
-        await book.save();
+        await book.save({ transaction });
+
+        await transaction.commit();
 
         res.status(201).json({
             message: "Book borrowed successfully.",
         });
     } catch (error) {
-        res.status(500).json({ error: "Failed to barrow book." });
+        await transaction.rollback();
+        res.status(500).json({ error: "Failed to borrow book." });
     }
 };
 
@@ -147,48 +157,60 @@ export const returnBook = async (req: Request, res: Response) => {
     const { userId, bookId } = req.params;
     const { score } = req.body;
 
-    const borrow = await Borrow.findOne({
-        where: {
-            userId,
-            bookId,
-            returnDate: null,
-        },
-    });
+    const transaction = await sequelize.transaction();
 
-    if (!borrow) {
-        throw new NotFoundError("Borrow record not found or already returned.");
-    }
     try {
+        const borrow = await Borrow.findOne({
+            where: {
+                userId,
+                bookId,
+                returnDate: null,
+            },
+            transaction,
+        });
+
+        if (!borrow) {
+            throw new NotFoundError("Borrow record not found or already returned.");
+        }
+
         borrow.returnDate = new Date();
-        await borrow.save();
+        await borrow.save({ transaction });
 
         if (score !== undefined) {
-            await Rating.create({
-                userId: Number(userId),
-                bookId: Number(bookId),
-                borrowId: borrow.id,
-                score,
-            });
+            await Rating.create(
+                {
+                    userId: Number(userId),
+                    bookId: Number(bookId),
+                    borrowId: borrow.id,
+                    score,
+                },
+                { transaction }
+            );
         }
 
         const ratings = await Rating.findAll({
             where: { bookId },
             attributes: ["score"],
+            transaction,
         });
-        const totalScore = ratings.reduce((acc, rating) => acc + rating.score, 0);
-        const averageScore = totalScore / ratings.length;
 
-        const book = await Book.findByPk(bookId);
+        const totalScore = ratings.reduce((acc, rating) => acc + rating.score, 0);
+        const averageScore = ratings.length > 0 ? totalScore / ratings.length : 0;
+
+        const book = await Book.findByPk(bookId, { transaction });
         if (book) {
             book.status = true;
             book.score = averageScore;
-            await book.save();
+            await book.save({ transaction });
         }
+
+        await transaction.commit();
 
         res.status(200).json({
             message: "Book returned successfully.",
         });
     } catch (error) {
+        await transaction.rollback();
         res.status(500).json({ error: "Failed to return book." });
     }
 };
